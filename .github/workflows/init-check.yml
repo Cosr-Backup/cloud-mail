@@ -1,0 +1,77 @@
+---
+name: Initialization Check
+
+'on':
+  workflow_dispatch:
+  schedule:
+    # Run daily at 02:00 UTC (optional scheduling)
+    - cron: '0 2 * * *'
+
+jobs:
+  check-initialization:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull from upstream
+        run: |
+          git remote add upstream \
+            https://github.com/Cosr-Backup/cloud-mail.git || true
+          git fetch upstream
+          git merge upstream/main || echo "No upstream changes to merge"
+
+      - name: Wait for 5 minutes
+        run: |
+          echo "Waiting for 5 minutes before checking initialization..."
+          sleep 300
+
+      - name: Check initialization status
+        env:
+          INIT_URL: ${{ secrets.INIT_URL }}
+        run: |
+          if [ -z "$INIT_URL" ]; then
+            echo "Error: INIT_URL environment variable is not set"
+            exit 1
+          fi
+
+          echo "Accessing initialization URL: $INIT_URL"
+
+          # Make HTTP request and capture response
+          response=$(curl -s -w "\n%{http_code}" "$INIT_URL" || \
+            echo "CURL_ERROR")
+
+          # Extract HTTP status code (last line)
+          http_code=$(echo "$response" | tail -n1)
+
+          # Extract response body (all lines except last)
+          response_body=$(echo "$response" | head -n -1)
+
+          echo "HTTP Status Code: $http_code"
+          echo "Response Body: $response_body"
+
+          # Check if curl failed
+          if [ "$response_body" = "CURL_ERROR" ]; then
+            echo "Error: Failed to access the URL"
+            exit 1
+          fi
+
+          # Check if HTTP request was successful
+          if [ "$http_code" != "200" ]; then
+            echo "Error: HTTP request failed with status code $http_code"
+            echo "Response: $response_body"
+            exit 1
+          fi
+
+          # Check if response contains "初始化成功"
+          if echo "$response_body" | grep -q "初始化成功"; then
+            echo "✅ Success: Initialization completed successfully!"
+            echo "Response contains '初始化成功'"
+          else
+            echo "❌ Failure: Initialization not successful"
+            echo "Expected '初始化成功' but got: $response_body"
+            exit 1
+          fi
